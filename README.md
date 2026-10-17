@@ -121,7 +121,7 @@ Slowloris là kỹ thuật tấn công từ chối dịch vụ (DoS) layer 7 b�
 
 ```bash
 # Nếu bạn có Git
-git clone https://github.com/yourname/PhantomStorm.git
+git clone https://github.com/haivoDA22TTD/PhantomStorm.git
 cd PhantomStorm
 
 # Hoặc download ZIP và giải nén
