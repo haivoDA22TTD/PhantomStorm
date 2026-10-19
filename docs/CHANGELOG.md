@@ -8,6 +8,28 @@ All notable changes to Phantom Storm will be documented in this file.
 
 ### 🎉 Major Features Added
 
+#### Modular Architecture
+- 🏗️ **Complete Refactoring**: Reorganized into modular structure (src/core, src/utils)
+- 📦 **Reusable Components**: Each module can be imported independently
+- 🧪 **Unit Tests**: Comprehensive test suite for all modules
+- 📚 **Examples**: Ready-to-use example scripts
+
+#### 🚀 HTTP Method Variation (NEW!)
+- ✨ **Multiple HTTP Methods**: Support for GET, POST, HEAD, OPTIONS, PUT, DELETE
+- 🎲 **Random Method Mode**: Use different methods for each request
+- 📝 **POST Body Generation**: Automatic random POST data
+- 🔧 **Flexible Configuration**: Command-line flags and Python API
+- 📖 **Complete Documentation**: Dedicated guide for HTTP methods
+
+**Usage:**
+```bash
+# Specific method
+python phantom_storm_v2.py target 80 200 --method=POST
+
+# Random methods
+python phantom_storm_v2.py target 80 200 --random-method
+```
+
 #### IP Spoofing & Bypass System
 - ✨ **Automatic IP Spoofing**: Each request uses unique spoofed IP in headers
 - 🧠 **Smart IP Generation**: Avoids private/reserved IP ranges (10.x, 192.168.x, 127.x)

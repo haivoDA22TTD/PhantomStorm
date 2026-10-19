@@ -13,6 +13,7 @@ __license__ = "MIT"
 from .core.attack_worker import AttackWorker
 from .core.statistics import AttackStatistics
 from .core.ip_generator import IPGenerator
+from .core.http_methods import HTTPMethodBuilder, HTTPMethod
 from .utils.colors import Colors
 from .utils.logger import setup_logging
 from . import config
@@ -21,6 +22,8 @@ __all__ = [
     'AttackWorker',
     'AttackStatistics',
     'IPGenerator',
+    'HTTPMethodBuilder',
+    'HTTPMethod',
     'Colors',
     'setup_logging',
     'config'
