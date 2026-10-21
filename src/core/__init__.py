@@ -17,6 +17,13 @@ from .attack_profiles import (
     BALANCED,
     AGGRESSIVE
 )
+from .tls_handler import (
+    TLSVersion,
+    TLSConfig,
+    TLSHandler,
+    TLSHelper,
+    create_https_socket
+)
 
 __all__ = [
     'AttackWorker',
@@ -29,5 +36,10 @@ __all__ = [
     'AttackProfiles',
     'STEALTH',
     'BALANCED',
-    'AGGRESSIVE'
+    'AGGRESSIVE',
+    'TLSVersion',
+    'TLSConfig',
+    'TLSHandler',
+    'TLSHelper',
+    'create_https_socket'
 ]

