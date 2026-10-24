@@ -1,6 +1,6 @@
 # ⚡ Phantom Storm v2.5 Ultimate Edition
 
-**Phantom Storm** là một công cụ kiểm thử bảo mật (Pentesting Tool) được viết bằng Python, chuyên giả lập các cuộc tấn công **Layer 7 HTTP Keep-Alive / Slowloris DoS** với khả năng **IP Spoofing** và **Bypass Rate Limiting** nâng cao. Công cụ này phục vụ mục đích nghiên cứu và tối ưu hóa hạ tầng mạng phòng thủ cho các kỹ sư hệ thống.
+**Phantom Storm** là một công cụ kiểm thử bảo mật (Pentesting Tool) được viết bằng Python, chuyên giả lập các cuộc tấn công **Layer 7 HTTP Keep-Alive / Slowloris DoS** với khả năng **IP Spoofing** và **Bypass Rate Limiting**. Công cụ này phục vụ mục đích nghiên cứu và tối ưu hóa hạ tầng mạng phòng thủ cho các kỹ sư hệ thống.
 
 ---
 
