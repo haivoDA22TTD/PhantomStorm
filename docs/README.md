@@ -829,9 +829,9 @@ $ sudo grep "limiting" /var/log/nginx/error.log | tail -3
 - **Support:** Chỉ hỗ trợ cho pentesting professionals được ủy quyền
 
 **Lịch Sử Phiên Bản:**
-- v1.0 (2024): Basic Slowloris attack
-- v2.0 (2024): Professional edition với stats, logging, error tracking
-- v2.5 (2024): Ultimate với IP Spoofing, 8 bypass headers, smart IP generation
+- v1.0 (2026): Basic Slowloris attack
+- v2.0 (2026): Professional edition với stats, logging, error tracking
+- v2.5 (2026): Ultimate với IP Spoofing, 8 bypass headers, smart IP generation
 
 ---
 
