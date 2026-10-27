@@ -24,6 +24,8 @@ from .tls_handler import (
     TLSHelper,
     create_https_socket
 )
+from .attack_types import AttackType
+from .slow_post import SlowPostAttack, SlowPostHelper
 
 __all__ = [
     'AttackWorker',
@@ -41,5 +43,8 @@ __all__ = [
     'TLSConfig',
     'TLSHandler',
     'TLSHelper',
-    'create_https_socket'
+    'create_https_socket',
+    'AttackType',
+    'SlowPostAttack',
+    'SlowPostHelper',
 ]

