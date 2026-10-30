@@ -24,6 +24,7 @@ class AttackType(Enum):
     SLOW_READ = "slow-read"           # Read response extremely slowly
     RANGE_HEADER = "range-header"     # Multiple byte ranges (Apache Killer)
     CACHE_BYPASS = "cache-bypass"     # Random parameters to bypass cache
+    HTTP2_RAPID_RESET = "http2-rapid-reset"  # HTTP/2 stream spam (CVE-2023-44487)
     
     @classmethod
     def get_description(cls, attack_type: 'AttackType') -> str:
@@ -33,7 +34,8 @@ class AttackType(Enum):
             cls.SLOW_POST: "Slow POST - Send POST body extremely slowly to exhaust upload handlers",
             cls.SLOW_READ: "Slow Read - Read server response extremely slowly to exhaust memory",
             cls.RANGE_HEADER: "Range Header - Request multiple byte ranges to spike CPU (Apache Killer)",
-            cls.CACHE_BYPASS: "Cache Bypass - Random parameters to hit backend directly"
+            cls.CACHE_BYPASS: "Cache Bypass - Random parameters to hit backend directly",
+            cls.HTTP2_RAPID_RESET: "HTTP/2 Rapid Reset (CVE-2023-44487) - Rapidly create and cancel streams to exhaust resources"
         }
         return descriptions.get(attack_type, "Unknown attack type")
     

@@ -26,6 +26,7 @@ from .tls_handler import (
 )
 from .attack_types import AttackType
 from .slow_post import SlowPostAttack, SlowPostHelper
+from .http2_rapid_reset import H2RapidResetAttack, H2RapidResetHelper, HTTP2Frame, SimpleHPACK
 
 __all__ = [
     'AttackWorker',
@@ -47,4 +48,8 @@ __all__ = [
     'AttackType',
     'SlowPostAttack',
     'SlowPostHelper',
+    'H2RapidResetAttack',
+    'H2RapidResetHelper',
+    'HTTP2Frame',
+    'SimpleHPACK',
 ]

