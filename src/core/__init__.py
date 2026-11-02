@@ -17,6 +17,16 @@ from .attack_profiles import (
     BALANCED,
     AGGRESSIVE
 )
+from .tls_handler import (
+    TLSVersion,
+    TLSConfig,
+    TLSHandler,
+    TLSHelper,
+    create_https_socket
+)
+from .attack_types import AttackType
+from .slow_post import SlowPostAttack, SlowPostHelper
+from .http2_rapid_reset import H2RapidResetAttack, H2RapidResetHelper, HTTP2Frame, SimpleHPACK
 
 __all__ = [
     'AttackWorker',
@@ -29,5 +39,17 @@ __all__ = [
     'AttackProfiles',
     'STEALTH',
     'BALANCED',
-    'AGGRESSIVE'
+    'AGGRESSIVE',
+    'TLSVersion',
+    'TLSConfig',
+    'TLSHandler',
+    'TLSHelper',
+    'create_https_socket',
+    'AttackType',
+    'SlowPostAttack',
+    'SlowPostHelper',
+    'H2RapidResetAttack',
+    'H2RapidResetHelper',
+    'HTTP2Frame',
+    'SimpleHPACK',
 ]

